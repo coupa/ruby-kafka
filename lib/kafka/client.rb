@@ -68,7 +68,7 @@ module Kafka
                    sasl_gssapi_keytab: nil, sasl_plain_authzid: '', sasl_plain_username: nil, sasl_plain_password: nil,
                    sasl_scram_username: nil, sasl_scram_password: nil, sasl_scram_mechanism: nil,
                    sasl_over_ssl: true, ssl_ca_certs_from_system: false,
-                   sasl_oauth_client_id: nil, sasl_oauth_client_secret: nil)
+                   sasl_oauth_client_id: nil, sasl_oauth_client_secret: nil, sasl_oauth_server_url: nil)
       @logger = logger || Logger.new(nil)
       @instrumenter = Instrumenter.new(client_id: client_id)
       @seed_brokers = normalize_seed_brokers(seed_brokers)
@@ -94,6 +94,7 @@ module Kafka
         sasl_scram_mechanism: sasl_scram_mechanism,
         sasl_oauth_client_id: sasl_oauth_client_id,
         sasl_oauth_client_secret: sasl_oauth_client_secret,
+        sasl_oauth_server_url: sasl_oauth_server_url,
         logger: @logger
       )
 

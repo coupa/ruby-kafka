@@ -10,7 +10,7 @@ module Kafka
     def initialize(logger:, sasl_gssapi_principal:, sasl_gssapi_keytab:,
                    sasl_plain_authzid:, sasl_plain_username:, sasl_plain_password:,
                    sasl_scram_username:, sasl_scram_password:, sasl_scram_mechanism:,
-                   sasl_oauth_client_id:, sasl_oauth_client_secret:)
+                   sasl_oauth_client_id:, sasl_oauth_client_secret:, sasl_oauth_server_url:)
       @logger = logger
 
       @plain = Sasl::Plain.new(
@@ -36,6 +36,7 @@ module Kafka
       @oauth2 = Sasl::OAuth2.new(
         client_id: sasl_oauth_client_id,
         client_secret: sasl_oauth_client_secret,
+        server_url: sasl_oauth_server_url,
         logger: @logger
       )
 
