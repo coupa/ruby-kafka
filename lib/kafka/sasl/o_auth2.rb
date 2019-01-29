@@ -21,7 +21,6 @@ module Kafka
 
             def authenticate!(host, encoder, decoder)
                 load_oauth2
-                sdfsdnfjkdnfk sdfsdfsdfsdfsdf sdfsdfsdfsdf sdsfsdfsdf sdfsdfsdf sdfsdfsdfsdf
                 client = OAuth2::Client.new(@client_id, @client_secret, :site => "#{@server_url}")
                 p "client - ", client.inspect
                 #use client.password.get_token(username, password)
