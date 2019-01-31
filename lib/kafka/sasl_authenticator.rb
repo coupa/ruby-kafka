@@ -53,7 +53,7 @@ module Kafka
 
       ident = @mechanism.ident
       response = connection.send_request(Kafka::Protocol::SaslHandshakeRequest.new(ident))
-      
+
       unless response.error_code == 0 && response.enabled_mechanisms.include?(ident)
         raise Kafka::Error, "#{ident} is not supported."
       end
