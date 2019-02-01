@@ -3,7 +3,7 @@
 require 'kafka/sasl/plain'
 require 'kafka/sasl/gssapi'
 require 'kafka/sasl/scram'
-require 'kafka/sasl/oauthbearer'
+require 'kafka/sasl/oauth_bearer'
 
 module Kafka
   class SaslAuthenticator
@@ -33,7 +33,7 @@ module Kafka
         logger: @logger,
       )
 
-      @oauth2 = Sasl::OAUTHBEARER.new(
+      @oauth = Sasl::OAuthBearer.new(
         logger: @logger,
         client_id: sasl_oauth_client_id,
         client_secret: sasl_oauth_client_secret,
@@ -41,7 +41,7 @@ module Kafka
         token_url: sasl_oauth_token_url
       )
 
-      @mechanism = [@gssapi, @plain, @scram, @oauth2].find(&:configured?)
+      @mechanism = [@gssapi, @plain, @scram, @oauth].find(&:configured?)
     end
 
     def enabled?

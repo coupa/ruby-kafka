@@ -1,7 +1,7 @@
 
 module Kafka
     module Sasl
-        class OAUTHBEARER
+        class OAuthBearer
             OAUTH_IDENT = "OAUTHBEARER"
             attr_reader :client_id, :client_secret, :server_url, :token_url
 
@@ -31,12 +31,12 @@ module Kafka
                 begin
                     token_to_verify = decoder.bytes
                     unless token_to_verify
-                        raise Kafka::Error, "OAuth authentication failed."
+                        raise Kafka::Error, "OAuth authentication failed with 'No response received on socket', this can happen when sending token on socket is failed"
                     else
                         @logger.info "Authentication successful"
                     end
                 rescue EOFError => e
-                    raise Kafka::Error, "OAuth authentication failed."
+                    raise Kafka::Error, "OAuth authentication failed with - #{e.message}"
                 end
             end
 
@@ -48,7 +48,7 @@ module Kafka
                     require 'json'
                     require 'base64'
                 rescue LoadError
-                    raise Kafka::Error, "In order to use OAuth authentication you need to install the `uri`, 'net/http', 'json', 'base64' gems."
+                    raise Kafka::Error, "In order to use OAuth authentication you need to install the 'net/http', 'json', 'base64' gems."
                 end
             end
             
@@ -73,14 +73,10 @@ module Kafka
             end
 
             def parse_and_get_token(response)
-                if response.code != '200'
-                    raise Kafka::Error, "OAuth authentication failed with = #{response.message}"
-                else
-                    response_body = JSON.parse(response.read_body)
-                    access_token = response_body['access_token']
-                    @logger.info "Received valid access token" if access_token
-                    access_token
-                end
+                response_body = JSON.parse(response.read_body)
+                access_token = response_body['access_token']
+                @logger.info "Received valid access token" if access_token
+                access_token
             end
 
             def construct_oauth_token(access_token)

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'fake_server'
+require 'net/http'
 
 describe Kafka::SaslAuthenticator do
   let(:logger) { LOGGER }
@@ -38,7 +39,11 @@ describe Kafka::SaslAuthenticator do
       sasl_plain_password: nil,
       sasl_scram_username: nil,
       sasl_scram_password: nil,
-      sasl_scram_mechanism: nil
+      sasl_scram_mechanism: nil,
+      sasl_oauth_client_id: nil,
+      sasl_oauth_client_secret: nil,
+      sasl_oauth_server_url: nil,
+      sasl_oauth_token_url: nil,
     }
   }
 
@@ -89,6 +94,33 @@ describe Kafka::SaslAuthenticator do
       expect {
         sasl_authenticator.authenticate!(connection)
       }.to raise_error(Kafka::FailedScramAuthentication)
+    end
+  end
+
+  context "when SASL OAuth has been configured" do
+    before do
+      auth_options.update(
+        sasl_oauth_client_id: "TestClientID",
+        sasl_oauth_client_secret: "TestClientSecret",
+        sasl_oauth_server_url: "https://api.example.com"
+      )
+    end
+
+    before do
+      http = Net::HTTP.new('api.example.com', 443)
+      expect(Net::HTTP).to receive(:new).with('api.example.com', 443).and_return(http)
+      allow(http).to \
+        receive(:request).with(an_instance_of(Net::HTTP::Post))
+          .and_return(Net::HTTPResponse)
+    end
+
+    it "authenticates" do
+      expect(Net::HTTPResponse).to receive(:read_body).and_return(response_body)
+      sasl_authenticator.authenticate!(connection)
+    end
+
+    def response_body
+      '{"access_token":"yqCHrUUHZ4Mc5Yw3edBSI_3hWAUsD6FyLlxEPEZlkDE.-ri5cnCXCzCsr44bwH-XBPvxAwImIW2Wurqk1RB8Wlg","expires_in":3599,"scope":"","token_type":"bearer"}'
     end
   end
 end
