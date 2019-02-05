@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'fake_server'
-require 'net/http'
+require 'oauth2'
 
 describe Kafka::SaslAuthenticator do
   let(:logger) { LOGGER }
@@ -106,21 +106,10 @@ describe Kafka::SaslAuthenticator do
       )
     end
 
-    before do
-      http = Net::HTTP.new('api.example.com', 443)
-      expect(Net::HTTP).to receive(:new).with('api.example.com', 443).and_return(http)
-      allow(http).to \
-        receive(:request).with(an_instance_of(Net::HTTP::Post))
-          .and_return(Net::HTTPResponse)
-    end
-
     it "authenticates" do
-      expect(Net::HTTPResponse).to receive(:read_body).and_return(response_body)
+      allow_any_instance_of(OAuth2::Strategy::ClientCredentials).to receive(:get_token).and_return(OAuth2::AccessToken)
+      expect(OAuth2::AccessToken).to receive(:token).and_return('access_token')
       sasl_authenticator.authenticate!(connection)
-    end
-
-    def response_body
-      '{"access_token":"yqCHrUUHZ4Mc5Yw3edBSI_3hWAUsD6FyLlxEPEZlkDE.-ri5cnCXCzCsr44bwH-XBPvxAwImIW2Wurqk1RB8Wlg","expires_in":3599,"scope":"","token_type":"bearer"}'
     end
   end
 end
