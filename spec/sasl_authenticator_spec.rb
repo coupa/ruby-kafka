@@ -44,6 +44,7 @@ describe Kafka::SaslAuthenticator do
       sasl_oauth_client_secret: nil,
       sasl_oauth_server_url: nil,
       sasl_oauth_token_url: nil,
+      sasl_oauth_scopes: nil,
     }
   }
 
