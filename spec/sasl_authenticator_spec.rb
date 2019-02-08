@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'fake_server'
+require 'oauth2'
 
 describe Kafka::SaslAuthenticator do
   let(:logger) { LOGGER }
@@ -38,7 +39,12 @@ describe Kafka::SaslAuthenticator do
       sasl_plain_password: nil,
       sasl_scram_username: nil,
       sasl_scram_password: nil,
-      sasl_scram_mechanism: nil
+      sasl_scram_mechanism: nil,
+      sasl_oauth_client_id: nil,
+      sasl_oauth_client_secret: nil,
+      sasl_oauth_server_url: nil,
+      sasl_oauth_token_url: nil,
+      sasl_oauth_scopes: nil,
     }
   }
 
@@ -89,6 +95,22 @@ describe Kafka::SaslAuthenticator do
       expect {
         sasl_authenticator.authenticate!(connection)
       }.to raise_error(Kafka::FailedScramAuthentication)
+    end
+  end
+
+  context "when SASL OAuth has been configured" do
+    before do
+      auth_options.update(
+        sasl_oauth_client_id: "TestClientID",
+        sasl_oauth_client_secret: "TestClientSecret",
+        sasl_oauth_server_url: "https://api.example.com"
+      )
+    end
+
+    it "authenticates" do
+      allow_any_instance_of(OAuth2::Strategy::ClientCredentials).to receive(:get_token).and_return(OAuth2::AccessToken)
+      expect(OAuth2::AccessToken).to receive(:token).and_return('access_token')
+      sasl_authenticator.authenticate!(connection)
     end
   end
 end
