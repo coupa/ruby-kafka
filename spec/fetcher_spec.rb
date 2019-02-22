@@ -6,8 +6,7 @@ describe Kafka::Fetcher do
   let(:logger) { Logger.new(StringIO.new) }
   let(:cluster) { double(:cluster) }
   let(:fetcher) do
-    described_class.new(group: group,
-                        instrumenter: instrumenter,
+    described_class.new(instrumenter: instrumenter,
                         logger: logger,
                         cluster: cluster,
                         max_queue_size: 1)
@@ -26,7 +25,6 @@ describe Kafka::Fetcher do
       fetcher.send(:handle_seek, 'my-topic', 1, 2)
       expect(instrumenter).to have_received(:instrument).with(
         'seek.consumer',
-        group_id: '123',
         topic: 'my-topic',
         partition: 1,
         offset: 2

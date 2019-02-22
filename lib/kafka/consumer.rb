@@ -43,8 +43,9 @@ module Kafka
   #     end
   #
   class Consumer
+    attr_accessor :running, :cluster, :fetcher, :reset_on_join_group
 
-    def initialize(cluster:, logger:, instrumenter:, group:, fetcher:, offset_manager:, session_timeout:, heartbeat:)
+    def initialize(cluster:, logger:, instrumenter:, group:, fetcher:, offset_manager:, session_timeout:, heartbeat:, reset_on_join_group: true)
       @cluster = cluster
       @logger = logger
       @instrumenter = instrumenter
@@ -53,6 +54,7 @@ module Kafka
       @session_timeout = session_timeout
       @fetcher = fetcher
       @heartbeat = heartbeat
+      @reset_on_join_group = reset_on_join_group
 
       @pauses = Hash.new {|h, k|
         h[k] = Hash.new {|h2, k2|
@@ -196,7 +198,7 @@ module Kafka
     #   The original exception will be returned by calling `#cause` on the
     #   {Kafka::ProcessingError} instance.
     # @return [nil]
-    def each_message(min_bytes: 1, max_bytes: 10485760, max_wait_time: 1, automatically_mark_as_processed: true)
+    def each_message(min_bytes: 1, max_bytes: 10485760, max_wait_time: 1, automatically_mark_as_processed: true, &block)
       @fetcher.configure(
         min_bytes: min_bytes,
         max_bytes: max_bytes,
@@ -205,56 +207,78 @@ module Kafka
 
       consumer_loop do
         batches = fetch_batches
+        process_message(
+          batches,
+          automatically_mark_as_processed: automatically_mark_as_processed,
+          &block)
+      end
+    end
 
-        batches.each do |batch|
-          batch.messages.each do |message|
-            notification = {
-              topic: message.topic,
-              partition: message.partition,
-              offset: message.offset,
-              offset_lag: batch.highwater_mark_offset - message.offset - 1,
-              create_time: message.create_time,
-              key: message.key,
-              value: message.value,
-              headers: message.headers
-            }
+    # Process batches as discrete messages
+    #
+    # Each message is yielded to the provided block. If the block returns
+    # without raising an exception, the message will be considered successfully
+    # processed. At regular intervals the offset of the most recent successfully
+    # processed message in each partition will be committed to the Kafka
+    # offset store. If the consumer crashes or leaves the group, the group member
+    # that is tasked with taking over processing of these partitions will resume
+    # at the last committed offsets.
+    #
+    # @param automatically_mark_as_processed [Boolean] whether to automatically
+    #   mark a message as successfully processed when the block returns
+    #   without an exception. Once marked successful, the offsets of processed
+    #   messages can be committed to Kafka.
+    # @yieldparam message [Kafka::FetchedMessage] a message fetched from Kafka.
+    # @return [nil]
+    def process_message(batches, automatically_mark_as_processed:)
+      batches.each do |batch|
+        batch.messages.each do |message|
+          notification = {
+            topic: message.topic,
+            partition: message.partition,
+            offset: message.offset,
+            offset_lag: batch.highwater_mark_offset - message.offset - 1,
+            create_time: message.create_time,
+            key: message.key,
+            value: message.value,
+            headers: message.headers
+          }
 
-            # Instrument an event immediately so that subscribers don't have to wait until
-            # the block is completed.
-            @instrumenter.instrument("start_process_message.consumer", notification)
+          # Instrument an event immediately so that subscribers don't have to wait until
+          # the block is completed.
+          @instrumenter.instrument("start_process_message.consumer", notification)
 
-            @instrumenter.instrument("process_message.consumer", notification) do
-              begin
-                yield message unless message.is_control_record
-                @current_offsets[message.topic][message.partition] = message.offset
-              rescue => e
-                location = "#{message.topic}/#{message.partition} at offset #{message.offset}"
-                backtrace = e.backtrace.join("\n")
-                @logger.error "Exception raised when processing #{location} -- #{e.class}: #{e}\n#{backtrace}"
+          @instrumenter.instrument("process_message.consumer", notification) do
+            begin
+              yield message unless message.is_control_record
+              @current_offsets[message.topic][message.partition] = message.offset
+            rescue => e
+              location = "#{message.topic}/#{message.partition} at offset #{message.offset}"
+              backtrace = e.backtrace.join("\n")
+              @logger.error "Exception raised when processing #{location} -- #{e.class}: #{e}\n#{backtrace}"
 
-                raise ProcessingError.new(message.topic, message.partition, message.offset)
-              end
+              raise ProcessingError.new(message.topic, message.partition, message.offset)
             end
-
-            mark_message_as_processed(message) if automatically_mark_as_processed
-            @offset_manager.commit_offsets_if_necessary
-
-            trigger_heartbeat
-
-            return if !@running
           end
 
-          # We've successfully processed a batch from the partition, so we can clear
-          # the pause.
-          pause_for(batch.topic, batch.partition).reset!
+          mark_message_as_processed(message) if automatically_mark_as_processed
+          @offset_manager.commit_offsets_if_necessary
+
+          trigger_heartbeat
+
+          return if !@running
         end
 
-        # We may not have received any messages, but it's still a good idea to
-        # commit offsets if we've processed messages in the last set of batches.
-        # This also ensures the offsets are retained if we haven't read any messages
-        # since the offset retention period has elapsed.
-        @offset_manager.commit_offsets_if_necessary
+        # We've successfully processed a batch from the partition, so we can clear
+        # the pause.
+        pause_for(batch.topic, batch.partition).reset!
       end
+
+      # We may not have received any messages, but it's still a good idea to
+      # commit offsets if we've processed messages in the last set of batches.
+      # This also ensures the offsets are retained if we haven't read any messages
+      # since the offset retention period has elapsed.
+      @offset_manager.commit_offsets_if_necessary
     end
 
     # Fetches and enumerates the messages in the topics that the consumer group
@@ -281,7 +305,7 @@ module Kafka
     #   messages can be committed to Kafka.
     # @yieldparam batch [Kafka::FetchedBatch] a message batch fetched from Kafka.
     # @return [nil]
-    def each_batch(min_bytes: 1, max_bytes: 10485760, max_wait_time: 1, automatically_mark_as_processed: true)
+    def each_batch(min_bytes: 1, max_bytes: 10485760, max_wait_time: 1, automatically_mark_as_processed: true, &block)
       @fetcher.configure(
         min_bytes: min_bytes,
         max_bytes: max_bytes,
@@ -290,61 +314,83 @@ module Kafka
 
       consumer_loop do
         batches = fetch_batches
+        process_batch(
+          batches,
+          automatically_mark_as_processed: automatically_mark_as_processed,
+          &block)
+      end
+    end
 
-        batches.each do |batch|
-          unless batch.empty?
-            raw_messages = batch.messages
-            batch.messages = raw_messages.reject(&:is_control_record)
+    # Process batches one batch at a time
+    #
+    # Each batch of messages is yielded to the provided block. If the block returns
+    # without raising an exception, the batch will be considered successfully
+    # processed. At regular intervals the offset of the most recent successfully
+    # processed message batch in each partition will be committed to the Kafka
+    # offset store. If the consumer crashes or leaves the group, the group member
+    # that is tasked with taking over processing of these partitions will resume
+    # at the last committed offsets.
+    #
+    # @param automatically_mark_as_processed [Boolean] whether to automatically
+    #   mark a batch's messages as successfully processed when the block returns
+    #   without an exception. Once marked successful, the offsets of processed
+    #   messages can be committed to Kafka.
+    # @yieldparam batch [Kafka::FetchedBatch] a message batch fetched from Kafka.
+    # @return [nil]
+    def process_batch(batches, automatically_mark_as_processed:)
+      batches.each do |batch|
+        unless batch.empty?
+          raw_messages = batch.messages
+          batch.messages = raw_messages.reject(&:is_control_record)
 
-            notification = {
-              topic: batch.topic,
-              partition: batch.partition,
-              last_offset: batch.last_offset,
-              offset_lag: batch.offset_lag,
-              highwater_mark_offset: batch.highwater_mark_offset,
-              message_count: batch.messages.count,
-            }
+          notification = {
+            topic: batch.topic,
+            partition: batch.partition,
+            last_offset: batch.last_offset,
+            offset_lag: batch.offset_lag,
+            highwater_mark_offset: batch.highwater_mark_offset,
+            message_count: batch.messages.count,
+          }
 
-            # Instrument an event immediately so that subscribers don't have to wait until
-            # the block is completed.
-            @instrumenter.instrument("start_process_batch.consumer", notification)
+          # Instrument an event immediately so that subscribers don't have to wait until
+          # the block is completed.
+          @instrumenter.instrument("start_process_batch.consumer", notification)
 
-            @instrumenter.instrument("process_batch.consumer", notification) do
-              begin
-                yield batch
-                @current_offsets[batch.topic][batch.partition] = batch.last_offset unless batch.unknown_last_offset?
-              rescue => e
-                offset_range = (batch.first_offset..batch.last_offset || batch.highwater_mark_offset)
-                location = "#{batch.topic}/#{batch.partition} in offset range #{offset_range}"
-                backtrace = e.backtrace.join("\n")
+          @instrumenter.instrument("process_batch.consumer", notification) do
+            begin
+              yield batch
+              @current_offsets[batch.topic][batch.partition] = batch.last_offset unless batch.unknown_last_offset?
+            rescue => e
+              offset_range = (batch.first_offset..batch.last_offset || batch.highwater_mark_offset)
+              location = "#{batch.topic}/#{batch.partition} in offset range #{offset_range}"
+              backtrace = e.backtrace.join("\n")
 
-                @logger.error "Exception raised when processing #{location} -- #{e.class}: #{e}\n#{backtrace}"
+              @logger.error "Exception raised when processing #{location} -- #{e.class}: #{e}\n#{backtrace}"
 
-                raise ProcessingError.new(batch.topic, batch.partition, offset_range)
-              ensure
-                batch.messages = raw_messages
-              end
+              raise ProcessingError.new(batch.topic, batch.partition, offset_range)
+            ensure
+              batch.messages = raw_messages
             end
-            mark_message_as_processed(batch.messages.last) if automatically_mark_as_processed
-
-            # We've successfully processed a batch from the partition, so we can clear
-            # the pause.
-            pause_for(batch.topic, batch.partition).reset!
           end
+          mark_message_as_processed(batch.messages.last) if automatically_mark_as_processed
 
-          @offset_manager.commit_offsets_if_necessary
-
-          trigger_heartbeat
-
-          return if !@running
+          # We've successfully processed a batch from the partition, so we can clear
+          # the pause.
+          pause_for(batch.topic, batch.partition).reset!
         end
 
-        # We may not have received any messages, but it's still a good idea to
-        # commit offsets if we've processed messages in the last set of batches.
-        # This also ensures the offsets are retained if we haven't read any messages
-        # since the offset retention period has elapsed.
         @offset_manager.commit_offsets_if_necessary
+
+        trigger_heartbeat
+
+        return if !@running
       end
+
+      # We may not have received any messages, but it's still a good idea to
+      # commit offsets if we've processed messages in the last set of batches.
+      # This also ensures the offsets are retained if we haven't read any messages
+      # since the offset retention period has elapsed.
+      @offset_manager.commit_offsets_if_necessary
     end
 
     # Move the consumer's position in a topic partition to the specified offset.
@@ -370,6 +416,14 @@ module Kafka
       @offset_manager.mark_as_processed(message.topic, message.partition, message.offset)
     end
 
+    def group_id
+      @group.group_id
+    end
+
+    def assigned_to?(topic, partition)
+      @group.assigned_to?(topic, partition)
+    end
+
     def trigger_heartbeat
       @heartbeat.trigger
     end
@@ -381,6 +435,21 @@ module Kafka
     # Aliases for the external API compatibility
     alias send_heartbeat_if_necessary trigger_heartbeat
     alias send_heartbeat trigger_heartbeat!
+
+    def finalize
+      # In order to quickly have the consumer group re-balance itself, it's
+      # important that members explicitly tell Kafka when they're leaving.
+      make_final_offsets_commit!
+      @group.leave rescue nil
+    end
+
+    def prepare
+      join_group unless @group.member?
+
+      trigger_heartbeat
+
+      resume_paused_partitions!
+    end
 
     private
 
@@ -419,10 +488,7 @@ module Kafka
     ensure
       @fetcher.stop
 
-      # In order to quickly have the consumer group re-balance itself, it's
-      # important that members explicitly tell Kafka when they're leaving.
-      make_final_offsets_commit!
-      @group.leave rescue nil
+      finalize
       @running = false
     end
 
@@ -461,7 +527,7 @@ module Kafka
         @offset_manager.clear_offsets_excluding(@group.assigned_partitions)
       end
 
-      @fetcher.reset
+      @fetcher.reset if reset_on_join_group
 
       @group.assigned_partitions.each do |topic, partitions|
         partitions.each do |partition|
@@ -484,6 +550,10 @@ module Kafka
       end
 
       @fetcher.seek(topic, partition, offset)
+    end
+
+    def seek_to_default(topic, partition)
+      @offset_manager.seek_to_default(topic, partition)
     end
 
     def resume_paused_partitions!
@@ -532,7 +602,7 @@ module Kafka
     rescue OffsetOutOfRange => e
       @logger.error "Invalid offset #{e.offset} for #{e.topic}/#{e.partition}, resetting to default offset"
 
-      @offset_manager.seek_to_default(e.topic, e.partition)
+      seek_to_default(e.topic, e.partition)
 
       retry
     rescue ConnectionError => e
