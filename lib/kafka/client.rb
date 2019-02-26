@@ -6,6 +6,7 @@ require "kafka/transaction_manager"
 require "kafka/broker_info"
 require "kafka/producer"
 require "kafka/consumer"
+require "kafka/consumers"
 require "kafka/heartbeat"
 require "kafka/broker_uri"
 require "kafka/async_producer"
@@ -347,6 +348,13 @@ module Kafka
         group_id: group_id,
       })
 
+      fetcher = Fetcher.new(
+        cluster: cluster,
+        logger: @logger,
+        instrumenter: instrumenter,
+        max_queue_size: fetcher_max_queue_size
+      )
+
       # The Kafka protocol expects the retention time to be in ms.
       retention_time = (offset_retention_time && offset_retention_time * 1_000) || -1
 
@@ -357,14 +365,6 @@ module Kafka
         session_timeout: session_timeout,
         retention_time: retention_time,
         instrumenter: instrumenter,
-      )
-
-      fetcher = Fetcher.new(
-        cluster: initialize_cluster,
-        group: group,
-        logger: @logger,
-        instrumenter: instrumenter,
-        max_queue_size: fetcher_max_queue_size
       )
 
       offset_manager = OffsetManager.new(
@@ -393,6 +393,32 @@ module Kafka
         session_timeout: session_timeout,
         heartbeat: heartbeat,
       )
+    end
+
+    # Creates a new Kafka consumers. This is used for fetching from multiple
+    # consumers within a single fetcher thread.
+    #
+    # @param fetcher_max_queue_size [Integer] max number of items in the fetch queue that
+    #   are stored for further processing. Note, that each item in the queue represents a
+    #   response from a single broker.
+    # @return [Consumer]
+    def consumers(fetcher_max_queue_size: 100)
+      cluster = initialize_cluster
+
+      fetcher = Fetcher.new(
+        cluster: cluster,
+        logger: @logger,
+        instrumenter: @instrumenter,
+        max_queue_size: fetcher_max_queue_size
+      )
+
+      consumers = Consumers.new(
+        cluster: cluster,
+        logger: @logger,
+        fetcher: fetcher,
+      )
+
+      consumers
     end
 
     # Fetches a batch of messages from a single partition. Note that it's possible

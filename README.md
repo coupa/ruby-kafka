@@ -519,6 +519,37 @@ end
 
 Each consumer process will be assigned one or more partitions from each topic that the group subscribes to. In order to handle more messages, simply start more processes.
 
+You can also consume from multiple consumer groups with a single thread using `Consumers`.
+
+```ruby
+require "kafka"
+
+kafka = Kafka.new(["kafka1:9092", "kafka2:9092"])
+
+# Get a group of consumers
+consumers = kafka.consumers
+
+# Consumers with the same group id will form a Consumer Group together.
+consumer = kafka.consumer(group_id: "my-consumer")
+
+# It's possible to subscribe to multiple topics by calling `subscribe`
+# repeatedly.
+consumer.subscribe("greetings")
+
+# Add the consumer to consumers
+consumers.add(consumer)
+
+# Stop the consumer when the SIGTERM signal is sent to the process.
+# It's better to shut down gracefully than to kill the process.
+trap("TERM") { consumers.stop }
+
+# This will loop indefinitely, yielding each message in turn.
+consumers.each_message do |message, consumer|
+  puts message.topic, message.partition
+  puts message.offset, message.key, message.value
+end
+```
+
 #### Consumer Checkpointing
 
 In order to be able to resume processing after a consumer crashes, each consumer will periodically _checkpoint_ its position within each partition it reads from. Since each partition has a monotonically increasing sequence of message offsets, this works by _committing_ the offset of the last message that was processed in a given partition. Kafka handles these commits and allows another consumer in a group to resume from the last commit when a member crashes or becomes unresponsive.
