@@ -348,13 +348,6 @@ module Kafka
         group_id: group_id,
       })
 
-      fetcher = Fetcher.new(
-        cluster: cluster,
-        logger: @logger,
-        instrumenter: instrumenter,
-        max_queue_size: fetcher_max_queue_size
-      )
-
       # The Kafka protocol expects the retention time to be in ms.
       retention_time = (offset_retention_time && offset_retention_time * 1_000) || -1
 
@@ -365,6 +358,13 @@ module Kafka
         session_timeout: session_timeout,
         retention_time: retention_time,
         instrumenter: instrumenter,
+      )
+
+      fetcher = Fetcher.new(
+        cluster: initialize_cluster,
+        logger: @logger,
+        instrumenter: instrumenter,
+        max_queue_size: fetcher_max_queue_size
       )
 
       offset_manager = OffsetManager.new(
@@ -406,7 +406,7 @@ module Kafka
       cluster = initialize_cluster
 
       fetcher = Fetcher.new(
-        cluster: cluster,
+        cluster: initialize_cluster,
         logger: @logger,
         instrumenter: @instrumenter,
         max_queue_size: fetcher_max_queue_size
