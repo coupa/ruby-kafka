@@ -404,10 +404,7 @@ module Kafka
     #   response from a single broker.
     # @return [Consumer]
     def consumers(fetcher_max_queue_size: 100)
-      cluster = initialize_cluster
-
       consumers = Consumers.new(
-        cluster: cluster,
         logger: @logger,
       )
 

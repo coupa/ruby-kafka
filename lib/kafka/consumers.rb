@@ -33,8 +33,7 @@ module Kafka
 
     attr_reader :consumers
 
-    def initialize(cluster:, logger:)
-      @cluster = cluster
+    def initialize(logger:)
       @logger = logger
       @consumers = {}
     end
@@ -50,7 +49,6 @@ module Kafka
       delete(group_id: group_id) if @consumers.key?(group_id)
 
       # Add consumer
-      consumer.cluster = @cluster
       @consumers[group_id] = consumer
 
       self
@@ -62,7 +60,6 @@ module Kafka
     # @return [Consumer]
     def delete(group_id:)
       consumer = @consumers.delete(group_id)
-      consumer.cluster = nil
       consumer
     end
 
@@ -179,7 +176,6 @@ module Kafka
     # @return [nil]
     def stop
       self.running = false
-      @cluster.disconnect
     end
 
   protected

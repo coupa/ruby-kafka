@@ -113,7 +113,7 @@ module Kafka
         Protocol.handle_error(response.error_code)
       end
     rescue ConnectionError, UnknownMemberId, RebalanceInProgress, IllegalGeneration => e
-      @logger.error "Error sending heartbeat: #{e}"
+      @logger.error "Error sending heartbeat for group `#{@group_id}: #{e}"
       raise HeartbeatError, e
     rescue NotCoordinatorForGroup
       @logger.error "Failed to find coordinator for group `#{@group_id}`; retrying..."
