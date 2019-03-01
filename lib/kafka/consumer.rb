@@ -442,8 +442,9 @@ module Kafka
 
     def step
       begin
+        batches = fetch_batches
+
         @instrumenter.instrument("loop.consumer") do
-          batches = fetch_batches
           yield batches
         end
       rescue HeartbeatError

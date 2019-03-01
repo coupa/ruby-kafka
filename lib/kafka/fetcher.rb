@@ -5,6 +5,7 @@ require "kafka/fetch_operation"
 module Kafka
   class Fetcher
     attr_reader :queue
+    attr_accessor :running
 
     def initialize(cluster:, logger:, instrumenter:, max_queue_size:, group:)
       @cluster = cluster
@@ -89,10 +90,6 @@ module Kafka
       return [tag, message]
     end
 
-    private
-
-    attr_reader :current_reset_counter
-
     def loop
       @instrumenter.instrument("loop.fetcher", {
         queue_size: @queue.size,
@@ -113,6 +110,10 @@ module Kafka
         sleep 1
       end
     end
+
+    private
+
+    attr_reader :current_reset_counter
 
     def handle_configure(min_bytes, max_bytes, max_wait_time)
       @min_bytes = min_bytes

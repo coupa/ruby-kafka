@@ -117,6 +117,14 @@ module Kafka
     #   {Kafka::ProcessingError} instance.
     # @return [nil]
     def each_message(min_bytes: 1, max_bytes: 10485760, max_wait_time: 1, automatically_mark_as_processed: true)
+      @consumers.each do |_, consumer|
+        consumer.fetcher.configure(
+          min_bytes: min_bytes,
+          max_bytes: max_bytes,
+          max_wait_time: max_wait_time,
+        )
+      end
+
       consumer_loop do |consumer, batches|
         consumer.process_message(
           batches,
@@ -153,11 +161,13 @@ module Kafka
     # @yieldparam consumer [Kafka::Consumer] a the consumer that the message is for.
     # @return [nil]
     def each_batch(min_bytes: 1, max_bytes: 10485760, max_wait_time: 1, automatically_mark_as_processed: true)
-      @fetcher.configure(
-        min_bytes: min_bytes,
-        max_bytes: max_bytes,
-        max_wait_time: max_wait_time,
-      )
+      @consumers.each do |_, consumer|
+        consumer.fetcher.configure(
+          min_bytes: min_bytes,
+          max_bytes: max_bytes,
+          max_wait_time: max_wait_time,
+        )
+      end
 
       consumer_loop do |consumer, batches|
         consumer.process_batch(
@@ -185,6 +195,7 @@ module Kafka
       while @running
         begin
           @consumers.each do |_, consumer|
+            consumer.fetcher.loop
             consumer.step do |batches|
               yield consumer, batches
             end
@@ -204,6 +215,7 @@ module Kafka
     def running=(running)
       @running = running
       @consumers.each do |_, c|
+        c.fetcher.running = running
         c.running = running
       end
     end
