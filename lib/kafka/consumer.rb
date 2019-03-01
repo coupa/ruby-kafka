@@ -43,9 +43,9 @@ module Kafka
   #     end
   #
   class Consumer
-    attr_accessor :running, :cluster, :fetcher, :reset_on_join_group
+    attr_accessor :running, :cluster, :fetcher
 
-    def initialize(cluster:, logger:, instrumenter:, group:, fetcher:, offset_manager:, session_timeout:, heartbeat:, reset_on_join_group: true)
+    def initialize(cluster:, logger:, instrumenter:, group:, fetcher:, offset_manager:, session_timeout:, heartbeat:)
       @cluster = cluster
       @logger = logger
       @instrumenter = instrumenter
@@ -54,7 +54,6 @@ module Kafka
       @session_timeout = session_timeout
       @fetcher = fetcher
       @heartbeat = heartbeat
-      @reset_on_join_group = reset_on_join_group
 
       @pauses = Hash.new {|h, k|
         h[k] = Hash.new {|h2, k2|
@@ -205,8 +204,7 @@ module Kafka
         max_wait_time: max_wait_time,
       )
 
-      consumer_loop do
-        batches = fetch_batches
+      consumer_loop do |batches|
         process_message(
           batches,
           automatically_mark_as_processed: automatically_mark_as_processed,
@@ -312,8 +310,7 @@ module Kafka
         max_wait_time: max_wait_time,
       )
 
-      consumer_loop do
-        batches = fetch_batches
+      consumer_loop do |batches|
         process_batch(
           batches,
           automatically_mark_as_processed: automatically_mark_as_processed,
@@ -443,43 +440,42 @@ module Kafka
       @group.leave rescue nil
     end
 
-    def prepare
-      join_group unless @group.member?
-
-      trigger_heartbeat
-
-      resume_paused_partitions!
+    def step
+      begin
+        @instrumenter.instrument("loop.consumer") do
+          batches = fetch_batches
+          yield batches
+        end
+      rescue HeartbeatError
+        make_final_offsets_commit!
+        join_group
+      rescue OffsetCommitError
+        join_group
+      rescue RebalanceInProgress
+        @logger.warn "Group rebalance in progress, re-joining..."
+        join_group
+      rescue FetchError, NotLeaderForPartition, UnknownTopicOrPartition
+        @cluster.mark_as_stale!
+      rescue LeaderNotAvailable => e
+        @logger.error "Leader not available; waiting 1s before retrying"
+        @cluster.mark_as_stale!
+        sleep 1
+      rescue ConnectionError => e
+        @logger.error "Connection error #{e.class}: #{e.message}"
+        @cluster.mark_as_stale!
+      end
     end
 
     private
 
-    def consumer_loop
+    def consumer_loop(&block)
       @running = true
 
       @fetcher.start
 
       while @running
         begin
-          @instrumenter.instrument("loop.consumer") do
-            yield
-          end
-        rescue HeartbeatError
-          make_final_offsets_commit!
-          join_group
-        rescue OffsetCommitError
-          join_group
-        rescue RebalanceInProgress
-          @logger.warn "Group rebalance in progress, re-joining..."
-          join_group
-        rescue FetchError, NotLeaderForPartition, UnknownTopicOrPartition
-          @cluster.mark_as_stale!
-        rescue LeaderNotAvailable => e
-          @logger.error "Leader not available; waiting 1s before retrying"
-          @cluster.mark_as_stale!
-          sleep 1
-        rescue ConnectionError => e
-          @logger.error "Connection error #{e.class}: #{e.message}"
-          @cluster.mark_as_stale!
+          step(&block)
         rescue SignalException => e
           @logger.warn "Received signal #{e.message}, shutting down"
           @running = false
@@ -527,7 +523,7 @@ module Kafka
         @offset_manager.clear_offsets_excluding(@group.assigned_partitions)
       end
 
-      @fetcher.reset if reset_on_join_group
+      @fetcher.reset
 
       @group.assigned_partitions.each do |topic, partitions|
         partitions.each do |partition|
@@ -550,10 +546,6 @@ module Kafka
       end
 
       @fetcher.seek(topic, partition, offset)
-    end
-
-    def seek_to_default(topic, partition)
-      @offset_manager.seek_to_default(topic, partition)
     end
 
     def resume_paused_partitions!
@@ -602,7 +594,7 @@ module Kafka
     rescue OffsetOutOfRange => e
       @logger.error "Invalid offset #{e.offset} for #{e.topic}/#{e.partition}, resetting to default offset"
 
-      seek_to_default(e.topic, e.partition)
+      @offset_manager.seek_to_default(e.topic, e.partition)
 
       retry
     rescue ConnectionError => e

@@ -33,9 +33,8 @@ module Kafka
 
     attr_reader :consumers
 
-    def initialize(cluster:, fetcher:, logger:)
+    def initialize(cluster:, logger:)
       @cluster = cluster
-      @fetcher = fetcher
       @logger = logger
       @consumers = {}
     end
@@ -52,8 +51,6 @@ module Kafka
 
       # Add consumer
       consumer.cluster = @cluster
-      consumer.fetcher = @fetcher
-      consumer.reset_on_join_group = false
       @consumers[group_id] = consumer
 
       self
@@ -66,8 +63,6 @@ module Kafka
     def delete(group_id:)
       consumer = @consumers.delete(group_id)
       consumer.cluster = nil
-      consumer.fetcher = nil
-      consumer.reset_on_join_group = true
       consumer
     end
 
@@ -125,12 +120,6 @@ module Kafka
     #   {Kafka::ProcessingError} instance.
     # @return [nil]
     def each_message(min_bytes: 1, max_bytes: 10485760, max_wait_time: 1, automatically_mark_as_processed: true)
-      @fetcher.configure(
-        min_bytes: min_bytes,
-        max_bytes: max_bytes,
-        max_wait_time: max_wait_time,
-      )
-
       consumer_loop do |consumer, batches|
         consumer.process_message(
           batches,
@@ -190,7 +179,6 @@ module Kafka
     # @return [nil]
     def stop
       self.running = false
-      @fetcher.stop
       @cluster.disconnect
     end
 
@@ -198,17 +186,19 @@ module Kafka
     def consumer_loop
       self.running = true
 
-      @fetcher.start
-
       while @running
-        batches = fetch_batches
-        batches.each do |consumer, batches|
-          yield(consumer, batches)
+        begin
+          @consumers.each do |_, consumer|
+            consumer.step do |batches|
+              yield consumer, batches
+            end
+          end
+        rescue SignalException => e
+          @logger.warn "Received signal #{e.message}, shutting down"
+          self.running = false
         end
       end
     ensure
-      @fetcher.stop
-
       @consumers.each do |_, consumer|
         consumer.finalize
       end
@@ -230,48 +220,6 @@ module Kafka
           return
         end
       end
-    end
-
-    def fetch_batches
-      # Return early if the consumer has been stopped.
-      return {} if !@running
-
-      @consumers.each do |_, consumer|
-        consumer.prepare
-      end
-
-      if !@fetcher.data?
-        @logger.debug "No batches to process"
-        sleep 2
-        {}
-      else
-        tag, message = @fetcher.poll
-
-        case tag
-        when :batches
-          message.reduce({}) do |ret, batch|
-            consumer_assigned_to(batch.topic, batch.partition) do |consumer|
-              ret[consumer] ||= []
-              ret[consumer] << batch
-            end
-            ret
-          end
-        when :exception
-          raise message
-        end
-      end
-    rescue OffsetOutOfRange => e
-      @logger.error "Invalid offset #{e.offset} for #{e.topic}/#{e.partition}, resetting to default offset"
-
-      consumer_assigned_to(e.topic, e.partition) do |consumer|
-        consumer.seek_to_default(topic, e.partition)
-      end
-
-      retry
-    rescue ConnectionError => e
-      @logger.error "Connection error while fetching messages: #{e}"
-
-      raise FetchError, e
     end
   end
 end

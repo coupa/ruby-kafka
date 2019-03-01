@@ -362,6 +362,7 @@ module Kafka
 
       fetcher = Fetcher.new(
         cluster: initialize_cluster,
+        group: group,
         logger: @logger,
         instrumenter: instrumenter,
         max_queue_size: fetcher_max_queue_size
@@ -405,17 +406,9 @@ module Kafka
     def consumers(fetcher_max_queue_size: 100)
       cluster = initialize_cluster
 
-      fetcher = Fetcher.new(
-        cluster: initialize_cluster,
-        logger: @logger,
-        instrumenter: @instrumenter,
-        max_queue_size: fetcher_max_queue_size
-      )
-
       consumers = Consumers.new(
         cluster: cluster,
         logger: @logger,
-        fetcher: fetcher,
       )
 
       consumers
