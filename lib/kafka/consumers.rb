@@ -172,7 +172,7 @@ module Kafka
       end
 
       start
-      
+
       consumer_loop do |consumer, batches|
         consumer.process_batch(
           batches,
@@ -191,6 +191,7 @@ module Kafka
       @thread = Thread.new do
         while @running
           @consumers.each do |_, consumer|
+            @logger.debug "Fetching consumer #{consumer.group_id}"
             consumer.fetcher.loop
           end
         end
