@@ -125,6 +125,8 @@ module Kafka
         )
       end
 
+      start
+
       consumer_loop do |consumer, batches|
         consumer.process_message(
           batches,
@@ -169,6 +171,8 @@ module Kafka
         )
       end
 
+      start
+      
       consumer_loop do |consumer, batches|
         consumer.process_batch(
           batches,
@@ -179,13 +183,31 @@ module Kafka
       end
     end
 
+    def start
+      return if @running
+
+      @running = true
+
+      @thread = Thread.new do
+        while @running
+          @consumers.each do |_, consumer|
+            consumer.fetcher.loop
+          end
+        end
+        @logger.info "Fetcher thread exited."
+      end
+      @thread.abort_on_exception = true
+    end
+
     # Stop the consumers.
     #
     # The consumers will finish any in-progress work and shut down.
     #
     # @return [nil]
     def stop
+      return unless @running
       self.running = false
+      @thread.join
     end
 
   protected
@@ -195,7 +217,6 @@ module Kafka
       while @running
         begin
           @consumers.each do |_, consumer|
-            consumer.fetcher.loop
             consumer.step do |batches|
               yield consumer, batches
             end
